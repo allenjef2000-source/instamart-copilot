@@ -35,6 +35,36 @@ Instamart-copilot project folder. Python 3.11 or newer is required.
 10. Run the pandas cross-check and exploratory analysis:
     `.\.venv\Scripts\python.exe analyse_data.py`
 
+11. Calculate customer recency, frequency and monetary values:
+    `.\.venv\Scripts\python.exe customer_rfm.py`
+
+12. Compare K-means customer groupings:
+    `.\.venv\Scripts\python.exe cluster_customers.py`
+
+13. Profile and name customer segments:
+    `.\.venv\Scripts\python.exe profile_segments.py`
+
+14. Prepare the lapse prediction dataset and train/test split:
+    `.\.venv\Scripts\python.exe prepare_lapse_data.py`
+
+15. Check preprocessing and baseline performance:
+    `.\.venv\Scripts\python.exe preprocess_lapse.py`
+
+16. Tune Logistic Regression and Random Forest:
+    `.\.venv\Scripts\python.exe train_lapse_models.py`
+
+17. Evaluate both tuned models on the test set:
+    `.\.venv\Scripts\python.exe evaluate_lapse_models.py`
+
+18. Run the training class-balance experiment:
+    `.\.venv\Scripts\python.exe balance_lapse.py`
+
+19. Interpret model features and save the selected model:
+    `.\.venv\Scripts\python.exe interpret_lapse.py`
+
+20. Create the illustrative Premium customer retention list:
+    `.\.venv\Scripts\python.exe create_retention_list.py`
+
     
 # Part A
 
@@ -189,8 +219,192 @@ not establish causation.
 
 # Part B
 
+## RFM and customer segmentation
+
+RFM uses completed orders, with snapshot 2025-10-01 00:00:00.
+
+| Measure | Result |
+|---|---:|
+| Customers with completed orders | 1,175 |
+| Median recency | 19 days |
+| Minimum / maximum recency | 0 / 180 days |
+| Mean / maximum frequency | 9.46 / 33 |
+| Mean monetary value (INR) | 2,552.06 |
+| Maximum monetary value (INR) | 14,766.55 |
+
+The three RFM features were standardised before K-means.
+Every run used n_init=10 and random_state=42.
+
+| K | Inertia | Silhouette |
+|---|---:|---:|
+| 2 | 1820.7606 | 0.4650 |
+| 3 | 1268.2346 | 0.4452 |
+| 4 | 743.0711 | 0.5255 |
+| 5 | 617.3666 | 0.4805 |
+| 6 | 503.1706 | 0.4819 |
+| 7 | 408.4605 | 0.4163 |
+| 8 | 366.5035 | 0.4123 |
+
+K=4 was selected because it has the highest silhouette score,
+a substantial inertia improvement over K=3, and useful business groups.
+Adding clusters allows tighter groups, so inertia decreases as K grows.
+Therefore, lower inertia alone cannot determine the best K.
+
+| ID | Segment | Customers | Mean recency | Mean frequency | Mean monetary (INR) | Action |
+|---|---|---:|---:|---:|---:|---|
+| 0 | Occasional Customers | 436 | 28.86 | 3.77 | 1,057.62 | Relevant recommendations |
+| 1 | Premium | 138 | 24.12 | 6.77 | 7,129.70 | Personalised service and retention benefits |
+| 2 | Frequent Customers | 419 | 8.77 | 19.40 | 3,410.02 | Loyalty rewards |
+| 3 | Inactive Customers | 182 | 109.04 | 2.20 | 685.99 | Reactivation campaign |
+
+Cluster IDs are labels with no ranking.
+Premium is the segment with the highest mean monetary value.
+
+PCA explained variance ratios were 0.6343 and 0.2180,
+totalling 0.8523.
+
+Required segment output: outputs/customer_segments.csv.
+
+## Lapse dataset and leakage prevention
+
+The cohort contains customers with a completed order before
+2025-09-01. A customer is labelled lapsed=1 if they have no
+completed order during September 2025.
+
+There are 1,156 eligible customers, including 443 lapsed customers
+(38.32%). The stratified split used test_size=0.2 and random_state=42.
+
+| Split | Not lapsed | Lapsed | Total |
+|---|---:|---:|---:|
+| Training | 570 | 354 | 924 |
+| Test | 143 | 89 | 232 |
+
+Features include recency, frequency, monetary value, average discount,
+cancellation rate, average delivery time, favourite category, city,
+age, gender and tenure.
+
+No orders from 2025-09-01 onwards entered the features.
+Whole-window segment labels were not used as model features.
+No encoder, scaler or resampler was fitted using test rows.
+Preprocessing was inside each model's cross-validation pipeline.
+
+Numeric features were standardised. Nominal features were one-hot
+encoded with drop="first". No feature values were missing.
+
+The training scaler's frequency mean was 8.1147, compared with
+8.0285 for the full cohort, because the scaler learned only from
+the training subset.
+
+Always predicting not lapsed gave test accuracy 61.64% and
+lapsed-class F1 of 0.
+
+## Model tuning and test evaluation
+
+Both searches used five-fold cross-validation with scoring="f1".
+
+Logistic Regression used max_iter=1000 and searched
+C in {0.01, 0.1, 1, 10, 100}.
+Best C: 100. Best cross-validated F1: 0.650553.
+
+Random Forest used n_estimators=100 and random_state=42.
+It searched max_depth in {3, 5, 8} and min_samples_leaf in
+{5, 10, 20}, giving 45 cross-validation fits.
+Best max_depth: 8. Best min_samples_leaf: 10.
+Best cross-validated F1: 0.681053.
+
+Test evaluation occurred after tuning.
+
+| Model | Accuracy | Lapsed precision | Lapsed recall | Lapsed F1 |
+|---|---:|---:|---:|---:|
+| Logistic Regression | 0.7284 | 0.6444 | 0.6517 | 0.6480 |
+| Random Forest | 0.7371 | 0.6591 | 0.6517 | 0.6554 |
+
+Confusion matrices use actual classes as rows and predicted classes
+as columns, with class order [not lapsed, lapsed].
+
+Logistic Regression: [[111, 32], [31, 58]].
+Random Forest: [[113, 30], [31, 58]].
+
+Random Forest was selected because its F1 and precision were
+slightly higher, with the same recall as Logistic Regression.
+Both identified 58 of 89 lapsed customers, but Random Forest
+incorrectly targeted two fewer continuing customers.
+Missing lapsing customers risks losing future business, while
+incorrect targeting wastes retention resources.
+Its test F1 of 0.6554 exceeds the required 0.55.
+
+## Class-balance experiment
+
+All original training rows were retained. An additional 216 lapsed
+training rows were sampled with replacement using random_state=42.
+The balanced training set had 570 rows per class.
+The test set remained unchanged.
+
+The best Logistic Regression settings were refitted on balanced data.
+
+| Training | Precision | Recall | F1 |
+|---|---:|---:|---:|
+| Original | 0.6444 | 0.6517 | 0.6480 |
+| Balanced | 0.5891 | 0.8539 | 0.6972 |
+
+Recall changed most, increasing by 20.22 percentage points.
+The model identified 76 rather than 58 lapsed customers, while
+false positives increased from 32 to 53.
+This helps the retention team reach more lapsing customers but
+also increases spending on customers who would continue ordering.
+
+Balanced Logistic Regression achieved higher measured F1.
+Random Forest remains the previously selected model; this experiment
+is reported separately rather than used for repeated test-set selection.
+
+## Interpretation and persistence
+
+Random Forest's five most important features:
+
+| Feature | Importance | Business reading |
+|---|---:|---|
+| Frequency | 0.279589 | Order frequency contributes most to predictions |
+| Monetary | 0.271176 | Total spending is another major predictor |
+| Recency | 0.115149 | Time since the last order helps distinguish lapse risk |
+| Average delivery time | 0.061286 | Delivery experience contributes to predictions |
+| Cancellation rate | 0.052325 | Cancellation behaviour provides predictive information |
+
+Importance does not indicate the direction of an association
+or establish causation.
+
+Logistic Regression coefficients for standardised numeric features,
+holding other features constant:
+- Recency: +0.0396; longer since the last order is associated
+  with higher predicted lapse risk.
+- Frequency: -1.6982; more orders are associated with lower risk.
+- Monetary: +0.2846; higher spending is associated with higher risk
+  after accounting for the other features.
+
+The selected Random Forest pipeline was saved to
+outputs/lapse_model.joblib. Reloading it reproduced the original
+test predictions exactly.
+
+## Illustrative retention list
+
+Among 40 Premium test customers, the 10 with the highest predicted
+lapse probabilities were saved to outputs/retention_list.csv.
+One of the 10 actually lapsed.
+
+The Premium flag is a post-hoc whole-window label that includes
+September behaviour, so this retention list is illustrative and
+not a leakage-free evaluation.
+
+
 # Part C
 
 # Part D
 
 # Limitations and Next Steps
+
+The Premium flag is a post-hoc whole-window label that includes
+September behaviour, so the retention list is illustrative and
+not a leakage-free evaluation. A future operational retention list
+should define Premium status using only pre-cutoff information.
+
+The data and policies are synthetic. Model results do not establish
+real-world performance or causal relationships.

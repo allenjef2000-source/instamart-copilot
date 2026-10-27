@@ -1,0 +1,5 @@
+segment_id,customers,mean_recency,mean_frequency,mean_monetary,is_premium,segment_name,recommended_action
+0,436,28.862385321100916,3.772935779816514,1057.618233944954,False,Occasional Customers,Send relevant product recommendations
+1,138,24.115942028985508,6.768115942028985,7129.695652173913,True,Premium,Offer personalised service and retention benefits
+2,419,8.766109785202865,19.403341288782816,3410.020525059666,False,Frequent Customers,Reward loyalty and encourage repeat purchases
+3,182,109.04395604395604,2.2032967032967035,685.9925824175824,False,Inactive Customers,Try a targeted reactivation campaign
