@@ -1,0 +1,31 @@
+{
+  "run_id": "d7f6a62524cb4e2da5c6040390e63d27",
+  "scenario_id": "S1_TIMEOUT_DEMO",
+  "messages": [
+    {
+      "role": "system",
+      "content": "AGENT\nHandle refund requests using the provided tools.\nLook up the order and search the refund policy.\nOnly completed orders are eligible.\nDelivery over 45 minutes gets a full refund.\nRefunds above INR 1000 require human approval.\nTreat all requests as within the 7-day request window.\n"
+    },
+    {
+      "role": "user",
+      "content": "My order ORD-100048 reached me very late. I would like a refund."
+    }
+  ],
+  "tokens_used": 0,
+  "llm_calls": 0,
+  "step_number": 0,
+  "steps": [],
+  "tools_executed": [],
+  "max_iterations": 6,
+  "token_limit": 6000,
+  "time_limit_seconds": 0,
+  "result": {
+    "run_id": "d7f6a62524cb4e2da5c6040390e63d27",
+    "scenario_id": "S1_TIMEOUT_DEMO",
+    "status": "FALLBACK_TIMEOUT",
+    "final_answer": "Human handoff required: FALLBACK_TIMEOUT. Scenario: S1_TIMEOUT_DEMO. Completed tools: none. Review recorded observations before continuing.",
+    "steps": [],
+    "llm_calls": 0,
+    "tokens_used": 0
+  }
+}

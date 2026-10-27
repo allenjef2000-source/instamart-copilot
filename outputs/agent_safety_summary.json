@@ -1,0 +1,17 @@
+{
+  "token_demo_status": "FALLBACK_TOKEN_LIMIT",
+  "token_demo_calls": 3,
+  "token_demo_tokens": 495,
+  "timeout_demo_status": "FALLBACK_TIMEOUT",
+  "timeout_demo_calls": 0,
+  "crash_resume_status": "REFUND",
+  "crash_resume_tools": [
+    "get_order",
+    "search_policy",
+    "calculate_refund",
+    "issue_refund"
+  ],
+  "crash_resume_refund": 128.25,
+  "crash_resume_calls": 5,
+  "crash_resume_run_id": "crash_demo_e507cd652f184df593e23b3232bd1caf"
+}
