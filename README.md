@@ -65,6 +65,18 @@ Instamart-copilot project folder. Python 3.11 or newer is required.
 20. Create the illustrative Premium customer retention list:
     `.\.venv\Scripts\python.exe create_retention_list.py`
 
+21. Check input limits and personal-information masking:
+    `.\.venv\Scripts\python.exe ticket_guardrails.py`
+
+22. Check classification prompts and reply validation:
+    `.\.venv\Scripts\python.exe triage_prompts.py`
+
+23. Compare zero-shot and few-shot classification with retries:
+    `.\.venv\Scripts\python.exe classify_tickets.py`
+
+24. Demonstrate token budgets and produce final ticket routing:
+    `.\.venv\Scripts\python.exe route_tickets.py`
+
     
 # Part A
 
@@ -396,6 +408,157 @@ not a leakage-free evaluation.
 
 
 # Part C
+
+## Input guardrails and privacy
+
+Tickets were processed in their original CSV order.
+Empty or whitespace-only tickets were skipped.
+Tickets exceeding 400 estimated input tokens were flagged
+without making a model call.
+
+| Input check | Count |
+|---|---:|
+| Total tickets | 164 |
+| Empty tickets skipped | 4 |
+| Long tickets flagged | 4 |
+| Eligible tickets | 156 |
+
+Each long ticket had an estimated 734 tokens.
+
+Personal details were masked before model calls, using the
+required patterns in this order: email, phone, order ID.
+
+| Redaction type | Replacements |
+|---|---:|
+| Email | 55 |
+| Phone | 91 |
+| Order ID | 132 |
+| Total | 278 |
+| Matches remaining after redaction | 0 |
+
+Assertions checked that reapplying the patterns found no matches.
+Each user message contained exactly the redacted ticket text.
+
+## Prompts, retries and output validation
+
+Both prompts specified the four allowed categories:
+billing, delivery, technical and fraud.
+The zero-shot prompt contained no examples.
+The few-shot prompt included labelled examples, including fraud.
+
+Temporary failures allowed at most three retries after the initial
+attempt. Retry n used a delay of
+0.05 × 2**n × random.uniform(0.9, 1.15) seconds.
+Each retry logged the ticket ID, retry number and delay.
+
+Each full run recovered 19 temporary failures.
+All retries were number 0, with waits within 0.045–0.0575 seconds.
+No ticket ended with a permanent error.
+The mock was reset immediately before each run.
+
+Valid JSON was accepted only when its category was allowed.
+For non-JSON replies, lowercase words were extracted using
+re.findall(r"[a-z]+", text.lower()).
+Exactly one distinct allowed category was required for keyword
+acceptance. Other outputs went to human review.
+Valid JSON with an invalid category was rejected without fallback.
+
+Each full run produced:
+
+| Status | Count |
+|---|---:|
+| classified_json | 135 |
+| classified_keyword | 12 |
+| flagged_invalid_output | 9 |
+| skipped_empty | 4 |
+| flagged_long | 4 |
+
+These are rule-validated outputs, not a guarantee of correct
+classification.
+
+## Zero-shot versus few-shot
+
+Accuracy was measured only over classified tickets.
+Token totals include usage from all successful model replies,
+including replies later rejected by validation.
+
+| Prompt | Classified | Correct | Accuracy | Total tokens | Tokens per classified ticket |
+|---|---:|---:|---:|---:|---:|
+| Zero-shot | 147 | 126 | 85.71% | 10,336 | 70.31 |
+| Few-shot | 147 | 147 | 100.00% | 22,192 | 150.97 |
+
+Zero-shot confusion table:
+
+| Actual / Predicted | billing | delivery | technical | fraud |
+|---|---:|---:|---:|---:|
+| billing | 38 | 0 | 0 | 0 |
+| delivery | 0 | 36 | 0 | 0 |
+| technical | 10 | 0 | 29 | 0 |
+| fraud | 11 | 0 | 0 | 23 |
+
+Few-shot corrected 21 errors: 11 fraud tickets and 10 technical
+tickets that zero-shot labelled billing.
+It used 11,856 additional tokens, increasing tokens per classified
+ticket from 70.31 to 150.97.
+The additional usage can be justified when correct fraud escalation
+and technical routing matter more than minimising token consumption.
+These results reflect the supplied deterministic mock and do not
+establish performance on real customer tickets.
+
+## Token budget demonstration
+
+The zero-shot budget demonstration used TOKEN_BUDGET=6000.
+It consumed 6,036 tokens and marked 65 tickets budget_exhausted.
+
+The budget is checked before each call, so the last permitted
+call can take usage slightly above the limit.
+No further eligible tickets trigger calls once the limit is reached.
+
+| Budget-demo status | Count |
+|---|---:|
+| classified_json | 79 |
+| classified_keyword | 7 |
+| flagged_invalid_output | 5 |
+| budget_exhausted | 65 |
+| skipped_empty | 4 |
+| flagged_long | 4 |
+
+The partial run recovered 11 temporary failures.
+Output: outputs/triage_budget_demo.csv.
+
+## Final routing
+
+The final few-shot run used TOKEN_BUDGET=100000 and consumed
+22,192 tokens. No tickets exhausted the budget.
+
+Routing rules were applied in this order:
+1. Empty, long, invalid-output or budget-exhausted tickets:
+   human_review, NORMAL priority.
+2. Classified fraud tickets:
+   security_team, HIGH priority.
+3. Other classified tickets from Premium customers:
+   premium_desk, HIGH priority.
+4. Other classified tickets:
+   support_queue, NORMAL priority.
+
+Customers absent from the segment file were treated as not Premium.
+
+| Route | Priority | Tickets |
+|---|---|---:|
+| human_review | NORMAL | 17 |
+| premium_desk | HIGH | 11 |
+| security_team | HIGH | 34 |
+| support_queue | NORMAL | 102 |
+| Total | | 164 |
+
+The 17 human-review tickets comprise 4 empty tickets, 4 long
+tickets and 9 invalid model outputs.
+
+The final outputs/triage_results.csv contains:
+ticket_id, customer_id, status, category, segment_name,
+priority, route and tokens_used.
+Unavailable category and segment values are left blank.
+
 
 # Part D
 

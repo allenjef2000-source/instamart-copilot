@@ -1,0 +1,3 @@
+prompt,classified,correct,accuracy,total_tokens,tokens_per_classified,retries
+zero_shot,147,126,0.8571428571428571,10336,70.31292517006803,19
+few_shot,147,147,1.0,22192,150.96598639455783,19
