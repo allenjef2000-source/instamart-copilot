@@ -1,5 +1,28 @@
 # Overview
 
+This project implements a Customer Intelligence & Support Copilot
+using synthetic, fictional Instamart data.
+
+Part A audits and cleans customer, product and order data, stores
+it in SQLite, and performs SQL and pandas analysis.
+
+Part B groups customers using RFM and K-means, then trains and
+evaluates models to predict customer lapse.
+
+Part C masks personal information, classifies support tickets,
+handles temporary model failures, validates responses and routes
+tickets using customer segments.
+
+Part D retrieves policy information, answers policy questions and
+runs a tool-using refund agent with safety limits and checkpoint recovery.
+
+All language-model calls use the supplied offline mock_llm.py.
+No API key, paid service or network call is required.
+All monetary values are in INR.
+
+Requirements: Python 3.11 or newer and SQLite 3.25 or newer.
+Install Python packages using requirements.txt.
+
 # Reproduce
 
 Run these commands in Windows PowerShell from the
@@ -76,6 +99,21 @@ Instamart-copilot project folder. Python 3.11 or newer is required.
 
 24. Demonstrate token budgets and produce final ticket routing:
     `.\.venv\Scripts\python.exe route_tickets.py`
+
+ 25. Check policy chunking and retrieval:
+    `.\.venv\Scripts\python.exe policy_retrieval.py`
+
+26. Evaluate policy answers with and without chunk overlap:
+    `.\.venv\Scripts\python.exe policy_assistant.py`
+
+27. Check refund tool definitions and calculations:
+    `.\.venv\Scripts\python.exe refund_tools.py`
+
+28. Run all seven refund-agent scenarios:
+    `.\.venv\Scripts\python.exe refund_agent.py`
+
+29. Demonstrate token limits, timeout and crash recovery:
+    `.\.venv\Scripts\python.exe test_agent_safety.py`
 
     
 # Part A
@@ -562,6 +600,168 @@ Unavailable category and segment values are left blank.
 
 # Part D
 
+## Policy retrieval and answering
+
+The five policy documents were split into 40-word chunks with
+10-word overlap. Chunk starts advanced by 30 words, stopping after
+the first chunk that reached the end of each document.
+
+| Document | Chunks |
+|---|---:|
+| refund_policy.txt | 4 |
+| delivery_policy.txt | 3 |
+| escalation_policy.txt | 3 |
+| payment_policy.txt | 3 |
+| privacy_policy.txt | 2 |
+| Total | 15 |
+
+TF measures how frequently a term appears in a chunk.
+IDF gives greater weight to terms occurring in fewer chunks.
+TF-IDF can miss matches when a question and policy use different
+words with similar meanings.
+
+TfidfVectorizer was fitted on the chunks. Queries were transformed
+using that same vectorizer and ranked using cosine similarity.
+retrieve(query, k=3) returns source, score and text.
+
+For "refund policy late delivery", all three retrieved chunks
+came from refund_policy.txt, with scores 0.2719, 0.2514 and 0.2454.
+
+The assistant receives a POLICY ASSISTANT system instruction
+and a user message containing CONTEXT, source-labelled chunks,
+and QUESTION. It returns the answer and retrieved sources.
+
+## Retrieval and grounding evaluation
+
+| Overlap | Chunks | Expected document in top three | Expected fact in answer | Unanswerable fallbacks |
+|---|---:|---:|---:|---:|
+| 10 words | 15 | 12/12 | 12/12 | 2/2 |
+| 0 words | 13 | 12/12 | 10/12 | 2/2 |
+
+Without overlap, the refund eligibility answer omitted
+"more than 45 minutes". The failed-payment answer omitted
+"48 hours". Chunk boundaries separated these conditions or facts
+from the sentences needed to answer the questions.
+
+Thus, retrieving the expected document alone did not guarantee
+a complete answer.
+
+Detailed results are saved in:
+- outputs/policy_eval_overlap_10.csv
+- outputs/policy_eval_overlap_0.csv
+- outputs/policy_evaluation_summary.csv
+
+## Refund tools and agent
+
+Five tools are defined in TOOLS_SPEC with names, descriptions
+and JSON-style parameter specifications. TOOL_MAP dispatches
+requested names to Python functions.
+
+| Tool | Purpose |
+|---|---|
+| get_order | Read order status, amount and delivery time from SQLite |
+| search_policy | Reuse the policy retrieval implementation |
+| calculate_refund | Calculate the completed order's late-delivery refund |
+| issue_refund | Record an eligible automatic refund |
+| escalate_to_human | Record a refund requiring human approval |
+
+Only completed orders qualify. Delivery above 45 minutes gives
+a full refund; delivery at or below 45 minutes gives no refund.
+Refunds above INR 1000 require human approval.
+All simulated requests are treated as within the 7-day window.
+
+Action tools validate the requested amount against the stored order.
+Issued and escalated actions append timestamped JSON lines to
+outputs/refund_ledger.jsonl. No real payments are made.
+
+The agent appends assistant tool requests and JSON tool observations
+to its message history. Each completed run is recorded in
+outputs/agent_runs.jsonl with status, answer, call count, token usage
+and tool steps including arguments and observations.
+
+## Seven scenario results
+
+| Scenario | Status | Refund/request amount (INR) | Model calls | Tokens |
+|---|---|---:|---:|---:|
+| S1 | REFUND | 128.25 | 5 | 1,132 |
+| S2 | REFUND | 135.00 | 5 | 1,132 |
+| S3 | ESCALATE | 1,999.00 | 5 | 1,119 |
+| S4 | DENIED | 0.00 | 4 | 793 |
+| S5 | DENIED | 0.00 | 3 | 478 |
+| S6 | NOT_FOUND | 0.00 | 2 | 166 |
+| S7 | FALLBACK_MAX_ITERATIONS | 0.00 | 6 | 3,282 |
+
+S3 records a request for human approval, rather than issuing money.
+S7 finishes all six permitted model calls under the default
+6000-token limit, then hands off to a human.
+
+## Safety limits
+
+The agent enforces:
+- At most six model calls by default.
+- An accumulated token limit checked after each model response,
+  before executing any newly requested tool.
+- A wall-clock timeout checked at the start of each iteration
+  using time.monotonic().
+
+Every fallback returns completed steps and a human-handoff summary.
+
+| Demonstration | Status | Model calls | Tokens |
+|---|---|---:|---:|
+| S1 with token_limit=200 | FALLBACK_TOKEN_LIMIT | 3 | 495 |
+| S1 with time_limit_seconds=0 | FALLBACK_TIMEOUT | 0 | 0 |
+
+The token-limit demonstration completed get_order and search_policy.
+It stopped before executing the next requested tool.
+The timeout demonstration stopped before the first model call.
+
+## Checkpoint and resume demonstration
+
+After each tool observation, the agent saves a checkpoint in state/
+containing the run ID, scenario ID, full messages, tokens used,
+model-call count, step number and tools already executed.
+
+For S1, a simulated crash occurred immediately after the second
+tool's checkpoint was saved.
+
+Before crash:
+1. get_order
+2. search_policy
+
+After resume:
+3. calculate_refund
+4. issue_refund
+
+Exactly four tools executed across both parts, with none repeated.
+The final status was REFUND for INR 128.25, using five model calls
+in total. Resuming the completed run again returned its saved result
+without adding another ledger action.
+
+The timeout starts again for a resumed invocation, while accumulated
+model-call and token counts are retained.
+
+## ReAct versus plan-and-execute
+
+The ReAct agent chooses its next action after observing each tool
+result. S1 required five model calls and 1132 tokens; S5 required
+three calls and 478 tokens; S6 required two calls and 166 tokens.
+Repeatedly sending the growing history increases token usage.
+
+A plan-and-execute design could request the intended tool sequence
+once and execute it with explicit checks, replanning on errors or
+unexpected observations. It could reduce model calls and tokens,
+although its actual savings would need measurement.
+
+ReAct naturally responds to an unknown order or cancelled status
+by changing its next decision. A planned workflow must explicitly
+branch or replan when these observations occur.
+
+For this narrow refund workflow, I would choose a validated
+plan-and-execute design with deterministic eligibility and amount
+checks because the policy branches are simple and predictable.
+ReAct remains useful when cases require more flexible investigation.
+
+
 # Limitations and Next Steps
 
 The Premium flag is a post-hoc whole-window label that includes
@@ -571,3 +771,12 @@ should define Premium status using only pre-cutoff information.
 
 The data and policies are synthetic. Model results do not establish
 real-world performance or causal relationships.
+The supplied offline mock is deterministic; its perfect few-shot
+and policy-evaluation scores do not establish real-model performance.
+
+Crash recovery was demonstrated after a saved tool checkpoint.
+A production system would need idempotency protection for a crash
+between recording a refund action and saving its checkpoint.
+
+The scenario and demonstration scripts append records when rerun.
+Repeated executions therefore add simulated runs and ledger actions.
